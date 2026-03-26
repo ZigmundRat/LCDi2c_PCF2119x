@@ -1,17 +1,21 @@
 """
-example_lcd.py  –  Usage examples for lcd_pcf2119x.py on ESP32-C3
+example_lcd.py  -  Usage examples for lcd_pcf2119x.py on ESP32-C3
 ==================================================================
 Copy both lcd_pcf2119x.py and this file to the ESP32-C3 filesystem,
 then run this script (or paste into the REPL).
 
 Wiring (adjust pin numbers to suit your board):
-  LCD SDA  →  GPIO 8
-  LCD SCL  →  GPIO 9
-  LCD VCC  →  3V3 (or 5 V – check your specific panel)
-  LCD GND  →  GND
+  LCD SDA  ->  GPIO 8
+  LCD SCL  ->  GPIO 9
+  LCD VCC  ->  3V3 (or 5 V - check your specific panel)
+  LCD GND  ->  GND
 
-I²C address: most PCF2119x boards respond on 0x3A (SA0=VSS) or 0x3B (SA0=VDD).
+I2C address: PCF2119x responds on 0x3A (SA0=GND) or 0x3B (SA0=VCC).
 Run i2c.scan() first if you are unsure.
+
+Charset: the 'R' variant (PCF2119RU) is used below because it is the
+one most commonly available on the surplus/hobbyist market.  Change to
+'A', 'D', or 'I' if you have a direct-mapped variant.
 """
 
 from machine import SoftI2C, Pin
@@ -19,22 +23,26 @@ import time
 from lcd_pcf2119x import LCD_PCF2119x
 
 # -------------------------------------------------------------------
-# 1. Construct I²C bus and LCD driver
+# 1. Construct I2C bus and LCD driver
 # -------------------------------------------------------------------
 i2c = SoftI2C(scl=Pin(9), sda=Pin(8), freq=100_000)
 
-# Optional: scan for I²C devices to confirm address
-# print("I²C devices found:", [hex(a) for a in i2c.scan()])
+# Optional: confirm I2C address
+# print("I2C devices found:", [hex(a) for a in i2c.scan()])
 
-lcd = LCD_PCF2119x(i2c, i2c_addr=0x3B, cols=16, rows=2, charset='R')
-lcd.begin()          # sends the full PCF2119x initialisation sequence
+# charset='R' -> PCF2119RU (swapped ROM, most common surplus variant)
+# charset='A' -> PCF2119AU (direct ASCII mapping, no remapping needed)
+lcd = LCD_PCF2119x(i2c, i2c_addr=0x3A, cols=16, rows=2, charset='R')
+lcd.begin()   # sends full PCF2119x init sequence, then clears with 0xA0
 
 # -------------------------------------------------------------------
 # 2. Basic text output
 # -------------------------------------------------------------------
+# clear() for charset 'R' fills DDRAM with 0xA0 (not 0x20) so the
+# display shows true blank cells.
 lcd.clear()
 lcd.print("Hello, world!")
-lcd.set_cursor(0, 1)          # column 0, row 1
+lcd.set_cursor(0, 1)       # col 0, row 1
 lcd.print("ESP32-C3  :)")
 time.sleep(2)
 
@@ -44,30 +52,30 @@ time.sleep(2)
 lcd.clear()
 lcd.print("Cursor demo")
 lcd.set_cursor(0, 1)
-lcd.cursor()                  # underline cursor
+lcd.cursor()               # underline
 time.sleep(1)
-lcd.blink()                   # add blinking block
+lcd.blink()                # add blinking block
 time.sleep(1)
 lcd.no_cursor()
 lcd.no_blink()
 
 # -------------------------------------------------------------------
-# 4. Scroll the display left / right
+# 4. Safe scroll (use *_safe variants on swapped-charset ROMs)
 # -------------------------------------------------------------------
 lcd.clear()
-lcd.print("<<< Scroll >>>" )
+lcd.print("<<< Scroll >>>")
 time.sleep(1)
 for _ in range(4):
-    lcd.scroll_display_left()
+    lcd.scroll_display_left_safe()    # pre-fills revealed col with 0xA0
     time.sleep(0.2)
 for _ in range(4):
-    lcd.scroll_display_right()
+    lcd.scroll_display_right_safe()   # pre-fills revealed col with 0xA0
     time.sleep(0.2)
 
 # -------------------------------------------------------------------
-# 5. Custom characters (user-defined glyphs)
+# 5. Custom characters
 # -------------------------------------------------------------------
-# Define a simple heart glyph (5×8 pixels)
+# Define a heart glyph in CGRAM slot 0
 heart = [
     0b00000,
     0b01010,
@@ -78,16 +86,33 @@ heart = [
     0b00000,
     0b00000,
 ]
-lcd.create_char(0, heart)     # store in CGRAM slot 0
+lcd.create_char(0, heart)
 
 lcd.clear()
 lcd.print("I ")
-lcd.write(0)                  # write custom char by slot number
+# User-defined chars live at ROM positions 0x00-0x0F regardless of
+# charset. Use data() to write the slot number without translation.
+lcd.data(0)                # CGRAM slot 0 -> heart glyph
 lcd.print(" MicroPython")
 time.sleep(2)
 
 # -------------------------------------------------------------------
-# 6. Display on / off
+# 6. Raw ROM access via data()
+# -------------------------------------------------------------------
+# data() bypasses _ascii_to_lcd() and writes directly to DDRAM.
+# Useful when you know the exact ROM position you want.
+lcd.clear()
+lcd.print("Raw ROM bytes:")
+lcd.set_cursor(0, 1)
+# On the R ROM, 0xA0-0xFF is where printable ASCII lives.
+# Writing 0xA0 + n directly gives the same result as print(chr(0x20+n))
+# but this makes the mapping explicit.
+for code in (0xA8, 0xA5, 0xAC, 0xAC, 0xAF):  # H E L L O in R-ROM
+    lcd.data(code)
+time.sleep(2)
+
+# -------------------------------------------------------------------
+# 7. Display on/off blink
 # -------------------------------------------------------------------
 lcd.clear()
 lcd.print("Blink display")
@@ -98,7 +123,7 @@ for _ in range(3):
     time.sleep(0.4)
 
 # -------------------------------------------------------------------
-# 7. Uptime counter – runs indefinitely
+# 8. Uptime counter - runs indefinitely
 # -------------------------------------------------------------------
 lcd.clear()
 lcd.print("Uptime:")
